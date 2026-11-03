@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+wrangler.toml
+.dev.vars
+.env
+__pycache__/
+salida/
+*.mp4

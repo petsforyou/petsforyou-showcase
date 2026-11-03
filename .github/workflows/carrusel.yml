@@ -1,0 +1,102 @@
+name: Carrusel de producto
+
+on:
+  workflow_dispatch:
+    inputs:
+      lista:
+        description: 'Nombre del fichero de media-pipeline/examples/ (sin .json)'
+        required: true
+        default: 'comederos'
+      datos:
+        description: 'JSON completo del carrusel (opcional, en claro o en base64). Si se rellena, se usa en vez del fichero de ejemplo'
+        required: false
+        default: ''
+  repository_dispatch:
+    types: [carrusel]
+
+jobs:
+  montar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install pillow requests
+
+      - name: Montar las diapositivas
+        env:
+          LISTA_INPUT: ${{ github.event.inputs.lista || github.event.client_payload.lista || 'comederos' }}
+          DATOS_INPUT: ${{ github.event.inputs.datos || github.event.client_payload.datos }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          LISTA="$LISTA_INPUT"
+          echo "LISTA=$LISTA" >> "$GITHUB_ENV"
+          echo "Montando el carrusel: $LISTA"
+
+          if [ -n "$DATOS_INPUT" ]; then
+            echo "Usando el JSON recibido en el input datos"
+            if DECODIFICADO=$(printf '%s' "$DATOS_INPUT" | base64 -d 2>/dev/null) && printf '%s' "$DECODIFICADO" | jq empty 2>/dev/null; then
+              echo "Venia en base64: decodificado"
+              printf '%s' "$DECODIFICADO" > datos_carrusel.json
+            else
+              echo "Ya venia en JSON en claro"
+              printf '%s' "$DATOS_INPUT" > datos_carrusel.json
+            fi
+            FICHERO="datos_carrusel.json"
+          else
+            FICHERO="media-pipeline/examples/$LISTA.json"
+          fi
+
+          # Si OpenAI corta por demasiadas peticiones seguidas (429), se espera y se reintenta
+          for INTENTO in 1 2 3 4; do
+            if python media-pipeline/scripts/carrusel.py "$FICHERO" salida; then
+              exit 0
+            fi
+            if [ "$INTENTO" -lt 4 ]; then
+              ESPERA=$((INTENTO * 60 + RANDOM % 30))
+              echo "Intento $INTENTO fallido; reintento en $ESPERA segundos"
+              sleep "$ESPERA"
+            fi
+          done
+          echo "El montaje ha fallado tras 4 intentos"
+          exit 1
+
+      - name: Subir el resultado
+        uses: actions/upload-artifact@v4
+        with:
+          name: carrusel-${{ env.LISTA }}
+          path: salida/
+          retention-days: 30
+
+      - name: Publicar en el repositorio de medios (opcional)
+        # Si la variable PUBLISH_REPO (owner/repo) existe, el resultado se sube
+        # a ese repositorio publico, para que las APIs de redes sociales lo
+        # lean por su URL raw. Si no, se queda solo como artefacto del run.
+        if: ${{ vars.PUBLISH_REPO != '' }}
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          PUBLISH_REPO: ${{ vars.PUBLISH_REPO }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${PUBLISH_TOKEN}@github.com/${PUBLISH_REPO}.git" repo
+          rm -rf "repo/carruseles/$LISTA"
+          mkdir -p "repo/carruseles/$LISTA"
+          cp salida/*.png "repo/carruseles/$LISTA/"
+          cd repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Actualizar carrusel $LISTA" || echo "sin cambios"
+          # Si otro flujo ha publicado a la vez, se trae su cambio y se reintenta
+          for i in 1 2 3 4 5; do git pull --rebase -q && git push && break; sleep 7; done
+          for f in ../salida/*.png; do
+            echo "https://raw.githubusercontent.com/${PUBLISH_REPO}/main/carruseles/$LISTA/$(basename "$f")" >> "$GITHUB_STEP_SUMMARY"
+          done

@@ -1,0 +1,130 @@
+name: Subtitulos incrustados
+
+on:
+  workflow_dispatch:
+    inputs:
+      video:
+        description: 'URL publica del video (o id de Drive)'
+        required: true
+      nombre:
+        description: 'Nombre del video final, sin extension (se publica en imagenes/videos/<nombre>.mp4)'
+        required: true
+      vocabulario:
+        description: 'Palabras que la transcripcion debe escribir bien (marcas, nombres), separadas por comas'
+        required: false
+        default: 'Petsforyou, hámster, TikTok'
+
+jobs:
+  subtitular:
+    runs-on: ubuntu-latest
+    env:
+      VIDEO: ${{ github.event.inputs.video }}
+      NOMBRE: ${{ github.event.inputs.nombre }}
+      VOCAB: ${{ github.event.inputs.vocabulario }}
+    steps:
+      - name: Preparar
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          pip install -q faster-whisper
+
+      - name: Descargar video
+        run: |
+          set -euo pipefail
+          u="$VIDEO"
+          case "$u" in http*) ;; *) u="https://drive.usercontent.google.com/download?id=${u}&export=download&confirm=t";; esac
+          curl -fsSL --retry 5 --retry-all-errors "$u" -o entrada.mp4
+          ffmpeg -y -loglevel error -i entrada.mp4 -vn -ac 1 -ar 16000 audio.wav
+
+      - name: Transcribir y crear subtitulos
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          from faster_whisper import WhisperModel
+          vocab = [v.strip() for v in os.environ.get('VOCAB', '').split(',') if v.strip()]
+          m = WhisperModel('small', device='cpu', compute_type='int8')
+          segs, _ = m.transcribe('audio.wav', language='es', word_timestamps=True,
+                                 vad_filter=False, initial_prompt=', '.join(vocab) or None)
+          words = [w for s in segs for w in s.words]
+
+          def fix(t):
+              t = re.sub(r'(?i)pets?\s*for\s*you', 'Petsforyou', t)
+              for v in vocab:
+                  t = re.sub(r'(?i)\b' + re.escape(v) + r'\b', v, t)
+              return t
+
+          # Bloques cortos (max 4 palabras / 24 caracteres), cortando en signos de puntuacion
+          chunks, cur = [], []
+          for w in words:
+              cur.append(w)
+              txt = ''.join(x.word for x in cur).strip()
+              if len(cur) >= 4 or len(txt) >= 24 or re.search(r'[.,;:!?]$', w.word.strip()):
+                  chunks.append(cur); cur = []
+          if cur:
+              chunks.append(cur)
+
+          def ts(t):
+              h = int(t // 3600); mi = int(t % 3600 // 60); s = t % 60
+              return f'{h}:{mi:02d}:{s:05.2f}'
+
+          head = """[Script Info]
+          ScriptType: v4.00+
+          PlayResX: 1080
+          PlayResY: 1920
+          WrapStyle: 0
+
+          [V4+ Styles]
+          Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+          Style: Sub,DejaVu Sans,74,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,6,2,2,80,80,430,1
+
+          [Events]
+          Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+          """
+          lines = [l.strip() for l in head.splitlines()]
+          for c in chunks:
+              t = fix(''.join(x.word for x in c).strip())
+              t = t.rstrip(',;:')
+              lines.append(f'Dialogue: 0,{ts(c[0].start)},{ts(c[-1].end + 0.05)},Sub,,0,0,0,,{t}')
+          open('subs.ass', 'w', encoding='utf-8').write('\n'.join(lines) + '\n')
+          print('\n'.join(lines[-len(chunks):]))
+          PY
+
+      - name: Incrustar subtitulos
+        run: |
+          set -euo pipefail
+          ffmpeg -y -loglevel error -i entrada.mp4 -vf "ass=subs.ass" \
+            -c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p \
+            -c:a copy -movflags +faststart "${NOMBRE}.mp4"
+          ls -lh "${NOMBRE}.mp4"
+
+      - name: Guardar el resultado
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-subtitulado
+          path: |
+            ${{ env.NOMBRE }}.mp4
+            subs.ass
+          retention-days: 7
+
+      - name: Publicar en el repositorio de medios (opcional)
+        # Si la variable PUBLISH_REPO (owner/repo) existe, el resultado se sube
+        # a ese repositorio publico, para que las APIs de redes sociales lo
+        # lean por su URL raw. Si no, se queda solo como artefacto del run.
+        if: ${{ vars.PUBLISH_REPO != '' }}
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          PUBLISH_REPO: ${{ vars.PUBLISH_REPO }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${PUBLISH_TOKEN}@github.com/${PUBLISH_REPO}.git" repo
+          mkdir -p repo/videos
+          cp "${NOMBRE}.mp4" repo/videos/
+          cp subs.ass "repo/videos/${NOMBRE}.ass"
+          cd repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Video con subtitulos ${NOMBRE}" || echo "sin cambios"
+          # Si otro flujo ha publicado a la vez, se trae su cambio y se reintenta
+          for i in 1 2 3 4 5; do git pull --rebase -q && git push && break; sleep 7; done
+          echo "https://raw.githubusercontent.com/${PUBLISH_REPO}/main/videos/${NOMBRE}.mp4" >> "$GITHUB_STEP_SUMMARY"

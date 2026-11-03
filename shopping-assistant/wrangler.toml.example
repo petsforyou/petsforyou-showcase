@@ -1,0 +1,26 @@
+# Copy to wrangler.toml and fill in your own values.
+# Secrets never go here: set them with `wrangler secret put`
+#   ANTHROPIC_API_KEY
+#   SHOPIFY_ADMIN_TOKEN            (or SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET)
+
+name = "shopping-assistant"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+SHOPIFY_STORE_DOMAIN = "your-store.myshopify.com"
+STORE_NAME = "Your Store"
+STORE_URL = "https://www.example.com"
+STORE_EMAIL = "hello@example.com"
+ALLOWED_ORIGINS = "https://www.example.com,https://example.com"
+ASSISTANT_MODEL = "claude-haiku-5-5"
+ASSISTANT_DAILY_PER_VISITOR = "30"
+ASSISTANT_DAILY_TOTAL = "600"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "shopping-assistant"
+database_id = "<your-d1-database-id>"
+
+[triggers]
+crons = ["0 4 * * *"]

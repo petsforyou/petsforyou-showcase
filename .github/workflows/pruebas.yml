@@ -1,0 +1,36 @@
+name: Pruebas
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  asistente:
+    name: Asistente de compras (TypeScript)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shopping-assistant
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: shopping-assistant/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  medios:
+    name: Montaje de medios (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comprobar el script y el ejemplo
+        run: |
+          python3 -m py_compile media-pipeline/scripts/carrusel.py
+          python3 -c "import json; json.load(open('media-pipeline/examples/comederos.json', encoding='utf-8'))"

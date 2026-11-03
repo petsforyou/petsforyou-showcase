@@ -1,0 +1,51 @@
+{
+  "nombre": "comederos",
+  "fondo": "#F5EFE6",
+  "color_titular": "#2E2A26",
+  "color_texto": "#5A524A",
+  "color_acento": "#C4784A",
+  "diapositivas": [
+    {
+      "titular": "No todos los comederos\nhacen lo mismo",
+      "texto": "5 tipos y para qué sirve cada uno",
+      "para": "",
+      "imagen": "https://cdn.shopify.com/s/files/1/1061/7359/5988/files/7431596823835_.pic_hd.jpg?v=1788767648"
+    },
+    {
+      "titular": "EL CLÁSICO",
+      "texto": "Comida y agua en un mismo sitio. Inoxidable, sin olores y al lavavajillas.",
+      "para": "Para la mayoría de perros y gatos que comen a su ritmo.",
+      "imagen": "https://cdn.shopify.com/s/files/1/1061/7359/5988/files/73a1441c-6ffe-4325-bbec-92645f3bad92.jpg?v=1788901283"
+    },
+    {
+      "titular": "EL DE LAMER",
+      "texto": "Silicona con surcos para untar comida húmeda o paté. Lamer relaja.",
+      "para": "Para mascotas nerviosas, días de tormenta o para entretener en el baño.",
+      "imagen": "https://cdn.shopify.com/s/files/1/1061/7359/5988/files/17911617221953_.pic_hd.jpg?v=1788767380"
+    },
+    {
+      "titular": "EL PUZLE",
+      "texto": "Hay que mover piezas y levantar tapas para llegar al premio.",
+      "para": "Para el que se aburre en casa. Quince minutos cansan más que un paseo corto.",
+      "imagen": "https://cdn.shopify.com/s/files/1/1061/7359/5988/files/18641617224048_.pic_hd.jpg?v=1788767502"
+    },
+    {
+      "titular": "EL ELEVADO",
+      "texto": "A la altura del pecho, sin agachar el cuello. Este además se ajusta según crece.",
+      "para": "Para perros grandes, mayores o con problemas de cervicales.",
+      "imagen": "https://cdn.shopify.com/s/files/1/1061/7359/5988/files/0D6F0AF9EA4F2FE11770E609A4FFD9D1.jpg?v=1788932223"
+    },
+    {
+      "titular": "EL ERGONÓMICO",
+      "texto": "Inclinado y elevado, para que los bigotes no rocen los bordes.",
+      "para": "Para gatos que dejan comida en el plato o apartan la croqueta con la pata.",
+      "imagen": "https://cdn.shopify.com/s/files/1/1061/7359/5988/files/3531596569660_.pic_hd.jpg?v=1788767765"
+    },
+    {
+      "titular": "Y EL MATERIAL IMPORTA",
+      "texto": "Acero inoxidable: no absorbe olores ni se raya.\nSilicona: ligera y plegable, ideal para viajar.\nPlástico: barato, pero se raya y ahí se queda la bacteria.",
+      "para": "Todos están en petsforyou.es",
+      "imagen": "https://cdn.shopify.com/s/files/1/1061/7359/5988/files/F79BF44AE90BE95A011881B7B0718FF3.jpg?v=1788932178"
+    }
+  ]
+}

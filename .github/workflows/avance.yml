@@ -1,0 +1,104 @@
+name: Avance del capitulo
+
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'analizar (hoja de fotogramas) o cortar (avance final)'
+        required: true
+        default: 'analizar'
+      video:
+        description: 'URL o id de Drive del capitulo montado'
+        required: true
+      nombre:
+        description: 'Nombre base sin extension'
+        required: true
+      inicio:
+        description: 'Segundo de inicio del corte (modo cortar)'
+        required: false
+        default: '0'
+      duracion:
+        description: 'Duracion del avance en segundos (5 a 8)'
+        required: false
+        default: '6'
+      rotulo:
+        description: 'Texto sobre el avance'
+        required: false
+        default: 'Mañana, capítulo completo'
+
+jobs:
+  avance:
+    runs-on: ubuntu-latest
+    env:
+      MODO: ${{ github.event.inputs.modo }}
+      VIDEO: ${{ github.event.inputs.video }}
+      NOMBRE: ${{ github.event.inputs.nombre }}
+      INICIO: ${{ github.event.inputs.inicio }}
+      DURACION: ${{ github.event.inputs.duracion }}
+      ROTULO: ${{ github.event.inputs.rotulo }}
+    steps:
+      - name: Instalar ffmpeg y fuentes
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+
+      - name: Descargar el capitulo
+        run: |
+          set -euo pipefail
+          URL="$VIDEO"
+          case "$URL" in http*) ;; *) URL="https://drive.usercontent.google.com/download?id=${URL}&export=download&confirm=t";; esac
+          curl -fsSL --retry 5 --retry-all-errors "$URL" -o capitulo.mp4
+          ffprobe -v error -show_entries format=duration -of csv=p=0 capitulo.mp4 | tee duracion.txt
+
+      - name: Hoja de fotogramas
+        if: env.MODO == 'analizar'
+        run: |
+          set -euo pipefail
+          mkdir -p salida
+          B=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+          D=$(cat duracion.txt); FILAS=$(awk "BEGIN{print int(($D+9)/10)}")
+          ffmpeg -y -loglevel error -i capitulo.mp4 -vf "fps=1,scale=192:-2,drawtext=fontfile=$B:text='%{n}s':x=6:y=6:fontsize=22:fontcolor=yellow:box=1:boxcolor=black@0.6,tile=10x${FILAS}" -frames:v 1 "salida/${NOMBRE}_hoja.png"
+          ffmpeg -nostdin -i capitulo.mp4 -af silencedetect=noise=-35dB:d=0.4 -f null - 2> silencios.log || true
+          grep -E 'silence_(start|end)' silencios.log | sed 's/.*\] //' > "salida/${NOMBRE}_silencios.txt" || true
+          cp duracion.txt "salida/${NOMBRE}_duracion.txt"
+
+      - name: Cortar el avance
+        if: env.MODO == 'cortar'
+        run: |
+          set -euo pipefail
+          mkdir -p salida
+          B=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+          printf '%s' "$ROTULO" > rotulo.txt
+          FO=$(awk "BEGIN{print $DURACION-0.6}")
+          ffmpeg -y -loglevel error -ss "$INICIO" -t "$DURACION" -i capitulo.mp4 \
+            -vf "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,drawtext=fontfile=$B:textfile=rotulo.txt:fontsize=64:fontcolor=white:borderw=5:bordercolor=black@0.8:x=(w-tw)/2:y=h-360,fade=t=out:st=${FO}:d=0.6,format=yuv420p" \
+            -af "afade=t=in:st=0:d=0.3,afade=t=out:st=${FO}:d=0.6" \
+            -c:v libx264 -crf 20 -preset medium -c:a aac -b:a 192k -movflags +faststart "salida/${NOMBRE}.mp4"
+          ls -lh salida
+
+      - name: Guardar el resultado
+        uses: actions/upload-artifact@v4
+        with:
+          name: avance-${{ env.MODO }}
+          path: salida/
+          retention-days: 7
+
+      - name: Publicar en el repositorio de medios (opcional)
+        # Si la variable PUBLISH_REPO (owner/repo) existe, el resultado se sube
+        # a ese repositorio publico, para que las APIs de redes sociales lo
+        # lean por su URL raw. Si no, se queda solo como artefacto del run.
+        if: ${{ vars.PUBLISH_REPO != '' }}
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          PUBLISH_REPO: ${{ vars.PUBLISH_REPO }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${PUBLISH_TOKEN}@github.com/${PUBLISH_REPO}.git" repo
+          if [ "$MODO" = "cortar" ]; then mkdir -p repo/videos; cp salida/*.mp4 repo/videos/; else mkdir -p repo/avances; cp salida/* repo/avances/; fi
+          cd repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Avance ${NOMBRE} (${MODO})" || echo "sin cambios"
+          # Si otro flujo ha publicado a la vez, se trae su cambio y se reintenta
+          for i in 1 2 3 4 5; do git pull --rebase -q && git push && break; sleep 7; done

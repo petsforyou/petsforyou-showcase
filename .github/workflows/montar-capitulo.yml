@@ -1,0 +1,161 @@
+name: Montar capitulo
+
+on:
+  repository_dispatch:
+    types: [montar]
+  workflow_dispatch:
+    inputs:
+      titulo:
+        description: Titulo que aparece en el rotulo de la intro
+        required: true
+        default: Las aventuras de Ada y sus amigos
+      nombre:
+        description: Nombre del archivo final, sin extension
+        required: true
+        default: CAPITULO
+      clips:
+        description: URLs de los clips en orden, separadas por comas (la intro la primera)
+        required: true
+      musica:
+        description: URL de la musica de fondo (opcional)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  montar:
+    runs-on: ubuntu-latest
+    env:
+      TITULO: ${{ github.event.client_payload.titulo || github.event.inputs.titulo }}
+      NOMBRE: ${{ github.event.client_payload.nombre || github.event.inputs.nombre }}
+      CLIPS: ${{ github.event.client_payload.clips || github.event.inputs.clips }}
+      MUSICA: ${{ github.event.client_payload.musica || github.event.inputs.musica }}
+
+    steps:
+      - name: Instalar ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
+      - name: Descargar los clips
+        run: |
+          set -euo pipefail
+          mkdir -p in norm
+          i=0
+          IFS=',' read -ra URLS <<< "$CLIPS"
+          for u in "${URLS[@]}"; do
+            u="$(echo "$u" | xargs)"
+            [ -z "$u" ] && continue
+            i=$((i+1))
+            n=$(printf "%03d" "$i")
+            echo "Descargando clip $n"
+            curl -fsSL "$u" -o "in/$n.mp4"
+          done
+          if [ "$i" -eq 0 ]; then echo "No ha llegado ningun clip"; exit 1; fi
+          echo "Total de clips: $i"
+          if [ -n "$MUSICA" ]; then
+            curl -fsSL "$MUSICA" -o musica.mp3
+          fi
+
+      - name: Normalizar todos los clips a vertical 1080x1920
+        run: |
+          set -euo pipefail
+          FUENTE=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+          primero=1
+          for f in in/*.mp4; do
+            n=$(basename "$f")
+            echo "Normalizando $n"
+
+            VF="scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p"
+
+            if [ "$primero" -eq 1 ]; then
+              TXT=$(echo "$TITULO" | sed "s/'/\\\\'/g; s/:/\\\\:/g")
+              VF="$VF,drawtext=fontfile=$FUENTE:text='$TXT':fontcolor=white:fontsize=64:borderw=4:bordercolor=black@0.8:x=(w-text_w)/2:y=h*0.80"
+              primero=0
+            fi
+
+            TIENE_AUDIO=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$f" | head -1 || true)
+
+            if [ -z "$TIENE_AUDIO" ]; then
+              ffmpeg -y -loglevel error -i "$f" \
+                -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 \
+                -vf "$VF" -shortest \
+                -c:v libx264 -preset veryfast -crf 20 -r 30 \
+                -c:a aac -b:a 192k -ar 48000 -ac 2 \
+                "norm/$n"
+            else
+              ffmpeg -y -loglevel error -i "$f" \
+                -vf "$VF" \
+                -c:v libx264 -preset veryfast -crf 20 -r 30 \
+                -c:a aac -b:a 192k -ar 48000 -ac 2 \
+                "norm/$n"
+            fi
+          done
+
+      - name: Unir los clips en orden
+        run: |
+          set -euo pipefail
+          : > lista.txt
+          for f in norm/*.mp4; do
+            echo "file '$PWD/$f'" >> lista.txt
+          done
+          cat lista.txt
+          ffmpeg -y -loglevel error -f concat -safe 0 -i lista.txt -c copy unido.mp4
+
+      - name: Musica de fondo que baja cuando hablan
+        run: |
+          set -euo pipefail
+          if [ -f musica.mp3 ]; then
+            echo "Mezclando musica con ducking"
+            ffmpeg -y -loglevel error -i unido.mp4 -i musica.mp3 \
+              -filter_complex "[1:a]aloop=loop=-1:size=2000000000,volume=0.30,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[mus];[mus][0:a]sidechaincompress=threshold=0.03:ratio=12:attack=15:release=500[duck];[0:a][duck]amix=inputs=2:duration=first:dropout_transition=0,alimiter=limit=0.95[aout]" \
+              -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k -ar 48000 -ac 2 \
+              conmusica.mp4
+          else
+            echo "Sin musica de fondo"
+            cp unido.mp4 conmusica.mp4
+          fi
+
+      - name: Anadir el cierre de 1,5 segundos
+        run: |
+          set -euo pipefail
+          ffmpeg -y -loglevel error -i conmusica.mp4 \
+            -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=1.5[v];[0:a]apad=pad_dur=1.5[a]" \
+            -map "[v]" -map "[a]" \
+            -c:v libx264 -preset veryfast -crf 20 -r 30 -pix_fmt yuv420p \
+            -c:a aac -b:a 192k -ar 48000 -ac 2 \
+            -movflags +faststart \
+            "${NOMBRE}_MONTADO.mp4"
+          ls -lh "${NOMBRE}_MONTADO.mp4"
+          ffprobe -v error -show_entries format=duration -of csv=p=0 "${NOMBRE}_MONTADO.mp4"
+
+      - name: Guardar el video montado
+        id: subir
+        uses: actions/upload-artifact@v4
+        with:
+          name: capitulo-montado
+          path: ${{ env.NOMBRE }}_MONTADO.mp4
+          retention-days: 7
+
+      - name: Avisar a Make de que esta listo
+        if: ${{ success() }}
+        env:
+          MAKE_WEBHOOK: ${{ secrets.MAKE_WEBHOOK }}
+        run: |
+          if [ -z "$MAKE_WEBHOOK" ]; then echo "Sin webhook configurado"; exit 0; fi
+          curl -fsS -X POST "$MAKE_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "{\"estado\":\"listo\",\"nombre\":\"${NOMBRE}_MONTADO.mp4\",\"run_id\":\"${{ github.run_id }}\",\"artifact_id\":\"${{ steps.subir.outputs.artifact-id }}\",\"artifact_url\":\"${{ steps.subir.outputs.artifact-url }}\"}"
+
+      - name: Avisar a Make si ha fallado
+        if: ${{ failure() }}
+        env:
+          MAKE_WEBHOOK: ${{ secrets.MAKE_WEBHOOK }}
+        run: |
+          if [ -n "$MAKE_WEBHOOK" ]; then
+            curl -fsS -X POST "$MAKE_WEBHOOK" \
+              -H "Content-Type: application/json" \
+              -d "{\"estado\":\"error\",\"run_id\":\"${{ github.run_id }}\"}"
+          fi

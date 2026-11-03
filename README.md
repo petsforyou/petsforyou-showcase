@@ -1,5 +1,7 @@
 # Petsforyou · AI & automation samples
 
+[![Pruebas](https://github.com/petsforyou/petsforyou-showcase/actions/workflows/pruebas.yml/badge.svg)](https://github.com/petsforyou/petsforyou-showcase/actions/workflows/pruebas.yml) ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+
 **English** · [Español](#español)
 
 Real code from [Petsforyou](https://www.petsforyou.es), an online pet store in Spain run by María Luz Mozo Weisz. This repository is a cleaned-up copy of two pieces that run in production, published as a portfolio sample. Keys, account IDs and private data were removed; the store-specific values are now configuration.
